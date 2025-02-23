@@ -26,5 +26,5 @@ def stitch_images_opencv(input_folder, output_folder="outputImages"):
         print("Error: Stitching failed. Try different images or check alignment.")
 
 if __name__ == "__main__":
-    input_folder = "inputImages"
+    input_folder = "inputImages/Set3"
     stitch_images_opencv(input_folder)

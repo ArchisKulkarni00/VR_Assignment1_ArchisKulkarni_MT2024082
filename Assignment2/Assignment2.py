@@ -2,7 +2,7 @@ import cv2
 import os
 import numpy as np
 
-def compute_panorama(img1, img2):
+def compute_panorama(img1, img2, isLeft):
     """
     Computes the panorama by stitching img1 and img2 using feature matching and homography.
     """
@@ -62,19 +62,19 @@ def compute_panorama(img1, img2):
     Ht = np.array([[1, 0, t[0]], [0, 1, t[1]], [0, 0, 1]])
 
     # Warp img2 into the new panorama
+    warped_img1 = cv2.warpPerspective(img2, Ht @ np.eye(3), (xmax - xmin, ymax - ymin))
     warped_img2 = cv2.warpPerspective(img1, Ht @ M, (xmax - xmin, ymax - ymin))
     # cv2.imwrite(f"outputImages/trial1.jpg", warped_img2)
-    print(warped_img2.shape)
-    print(img2.shape)
-    print(t[1],"  ",(h1 + t[1]),"   ", t[0],"  ",w1 + t[0])
-    warped_img2[t[1]:h2 + t[1], t[0]:w2 + t[0]] = img2
-    start = (warped_img2.shape[1]-img1.shape[1])//2
-    end = start+img1.shape[1]
-    warped_img2 = warped_img2[:,start:end]
+    warped_img2 = np.maximum(warped_img1, warped_img2)
+
+    if isLeft:
+        warped_img2 = warped_img2[t[1]:h2 + t[1],:w2 + t[0]]
+    else:
+        warped_img2 = warped_img2[t[1]:h2 + t[1],:]
     return warped_img2
 
 def main():
-    input_folder = "inputImages"
+    input_folder = "inputImages/Set3"
 
     if not os.path.exists(input_folder):
         print(f"Folder {input_folder} does not exist.")
@@ -90,22 +90,29 @@ def main():
         return
 
     # Initialize the first image as the stitched result
-    # img_stitched = images[0]
-    img_stitched = compute_panorama(images[0], images[1])
-    img_stitched = compute_panorama(img_stitched, images[2])
-    img_stitched = compute_panorama(img_stitched, images[3])
+    middle_index = (len(images)//2)-1
+    img_stitchedL = images[0]
 
     # Iterate over all images and compute panoramas
-    # for i in range(1, len(images)):
-    #     img_stitched = compute_panorama(img_stitched, images[i])
-    #     print(f"Stitched {i + 1} images.")
-    #     cv2.imwrite(f"outputImages/image{i}.jpg", img_stitched)
+    for i in range(1, middle_index+1):
+        img_stitchedL = compute_panorama(img_stitchedL, images[i],1)
+        print(f"Stitched {i + 1} images (left).")
+        cv2.imwrite(f"outputImages/imgL{i}.jpg", img_stitchedL)
 
+    img_stitchedR = images[len(images)-1]
+    for i in range(len(images)-2, middle_index, -1):
+        img_stitchedR = compute_panorama(img_stitchedR, images[i], 0)
+        print(f"Stitched {i + 1 - middle_index} images (right).")
+        cv2.imwrite(f"outputImages/imgR{i}.jpg", img_stitchedR)
+
+    final_panorama = compute_panorama(img_stitchedL, img_stitchedR, 1)
 
     # Save the final panorama
-    output_path = "outputImages/final_panorama.jpg"
+    output_path = "outputImages"
     os.makedirs("outputImages", exist_ok=True)
-    cv2.imwrite(output_path, img_stitched)
+    cv2.imwrite(output_path+"/finalPanoramaL.jpg", img_stitchedL)
+    cv2.imwrite(output_path+"/finalPanoramaR.jpg", img_stitchedR)
+    cv2.imwrite(output_path+"/finalPanorama.jpg", final_panorama)
     print(f"Panorama saved as '{output_path}'.")
 
 if __name__ == "__main__":

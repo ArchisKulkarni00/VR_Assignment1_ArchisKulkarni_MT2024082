@@ -2,9 +2,9 @@ import cv2
 import os
 import numpy as np
 
-def compute_panorama(img1, img2):
+def compute_homography(img1, img2):
     """
-    Computes the panorama by stitching img1 and img2 using feature matching and homography.
+    Computes the homography matrix between two images using feature matching.
     """
     # Convert images to grayscale
     gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
@@ -17,73 +17,57 @@ def compute_panorama(img1, img2):
 
     if des1 is None or des2 is None:
         print("Error: Could not compute descriptors.")
-        return img1
+        return None
 
     # Feature matching
-    bf = cv2.DescriptorMatcher_create("BruteForce")
-    matches = bf.knnMatch(des1, des2, 2)
+    bf = cv2.BFMatcher()
+    matches = bf.knnMatch(des1, des2, k=2)
     good_matches = [m for m, n in matches if m.distance < 0.75 * n.distance]
 
     if len(good_matches) < 10:
         print("Not enough good matches found.")
-        return img1
+        return None
 
     # Get matched keypoints
     src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
     dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
     # Compute homography
-    M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 4.0)
-    if M is None:
-        print("Error: Homography matrix not found.")
-        return img1
+    H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 4.0)
+    return H
 
-    # Warp img2 to align with img1
-    h1, w1 = img1.shape[:2]
-    h2, w2 = img2.shape[:2]
+def warp_images(images, homographies, middle_index):
+    """
+    Warps all images into the same coordinate space using the middle image as reference.
+    """
+    h, w = images[middle_index].shape[:2]
+    all_corners = []
 
-    # Define corners of both images
-    corners_img1 = np.float32([[0, 0], [0, h1], [w1, h1], [w1, 0]]).reshape(-1, 1, 2)
-    corners_img2 = np.float32([[0, 0], [0, h2], [w2, h2], [w2, 0]]).reshape(-1, 1, 2)
-    
-    # Transform img2 corners to panorama space
-    transformed_corners = cv2.perspectiveTransform(corners_img2, M)
-    
-    # Compute final bounding box
-    all_corners = np.concatenate((corners_img1, transformed_corners), axis=0)
-    [xmin, ymin] = np.int32(all_corners.min(axis=0).ravel() - 0.5)
-    [xmax, ymax] = np.int32(all_corners.max(axis=0).ravel() + 0.5)
+    for i, H in enumerate(homographies):
+        corners = np.float32([[0, 0], [0, h], [w, h], [w, 0]]).reshape(-1, 1, 2)
+        transformed_corners = cv2.perspectiveTransform(corners, H)
+        all_corners.append(transformed_corners)
+
+    all_corners = np.concatenate(all_corners, axis=0)
+    x_min, y_min = np.int32(all_corners.min(axis=0).flatten())
+    x_max, y_max = np.int32(all_corners.max(axis=0).flatten())
 
     # Compute translation matrix
-    t = [-xmin, -ymin]
-    Ht = np.array([[1, 0, t[0]], [0, 1, t[1]], [0, 0, 1]])
+    translation_matrix = np.array([[1, 0, -x_min], [0, 1, -y_min], [0, 0, 1]])
 
-    # Warp img1 into the panorama space
-    panorama_width = xmax - xmin
-    panorama_height = ymax - ymin
-    maska = np.ones((img1.shape[0],img1.shape[1]))*255
-    maskb = np.ones((img1.shape[0],img1.shape[1]))*255
-    warped_img1 = cv2.warpPerspective(img2, Ht @ np.eye(3), (panorama_width, panorama_height))
-    warped_img2 = cv2.warpPerspective(img1, Ht @ M, (panorama_width, panorama_height))
-    mask1 = cv2.warpPerspective(maska, Ht @ np.eye(3), (panorama_width, panorama_height))
-    mask2 = cv2.warpPerspective(maskb, Ht @ M, (panorama_width, panorama_height))
-    mask = mask1+mask2
+    # Warp all images into a common space
+    panorama_size = (x_max - x_min, y_max - y_min)
+    panorama = np.zeros((y_max - y_min, x_max - x_min, 3), dtype=np.uint8)
 
-    cv2.imwrite(f"outputImages/wimg1.jpg", warped_img1)
-    cv2.imwrite(f"outputImages/wimg2.jpg", warped_img2)
-    cv2.imwrite(f"outputImages/mask.jpg", mask)
+    for i, (img, H) in enumerate(zip(images, homographies)):
+        H_translated = translation_matrix @ H
+        warped_img = cv2.warpPerspective(img, H_translated, panorama_size)
+        panorama = np.maximum(panorama, warped_img)  # Overlay images
 
-    print(xmax,"   ",xmin)
-    print(ymax,"   ",ymin)
-
-    mask = mask.astype(np.uint8)
-    result = cv2.bitwise_or(warped_img1, warped_img2, mask=mask)
-    # result = warped_img2+warped_img1
-
-    return result
+    return panorama
 
 def main():
-    input_folder = "inputImages"
+    input_folder = "inputImages/Set2"
 
     if not os.path.exists(input_folder):
         print(f"Folder {input_folder} does not exist.")
@@ -91,29 +75,39 @@ def main():
 
     # Read images from the folder
     image_files = sorted([f for f in os.listdir(input_folder) if f.endswith(('.jpg', '.png', '.jpeg'))])
-    print(image_files)
     images = [cv2.imread(os.path.join(input_folder, f)) for f in image_files]
 
     if len(images) < 2:
-        print("No valid images found in the folder.")
+        print("Error: Need at least two images for stitching.")
         return
 
-    # Initialize the first image as the stitched result
-    # img_stitched = images[0]
-    img_stitched = compute_panorama(images[0], images[1])
-    cv2.imwrite(f"outputImages/trial.jpg", img_stitched)
+    # Select the middle image as reference
+    middle_index = len(images) // 2
+    homographies = [np.eye(3)]  # Identity matrix for the reference image
 
-    # Iterate over all images and compute panoramas
-    # for i in range(1, len(images)):
-    #     img_stitched = compute_panorama(img_stitched, images[i])
-    #     print(f"Stitched {i + 1} images.")
-    #     cv2.imwrite(f"outputImages/image{i}.jpg", img_stitched)
+    # Compute homographies for left and right images relative to the middle
+    for i in range(middle_index - 1, -1, -1):  # Left-side images
+        H = compute_homography(images[i], images[i + 1])
+        if H is None:
+            print(f"Skipping image {i} due to homography failure.")
+            continue
+        homographies.insert(0, homographies[0] @ H)  # Accumulate homographies
+
+    for i in range(middle_index + 1, len(images)):  # Right-side images
+        H = compute_homography(images[i], images[i - 1])
+        if H is None:
+            print(f"Skipping image {i} due to homography failure.")
+            continue
+        homographies.append(homographies[-1] @ np.linalg.inv(H))  # Accumulate in reverse
+
+    # Warp images into common space
+    final_panorama = warp_images(images, homographies, middle_index)
 
     # Save the final panorama
-    output_path = "outputImages/final_panorama.jpg"
-    os.makedirs("outputImages", exist_ok=True)
-    cv2.imwrite(output_path, img_stitched)
-    print(f"Panorama saved as '{output_path}'.")
+    output_path = "outputImages"
+    os.makedirs(output_path, exist_ok=True)
+    cv2.imwrite(output_path + "/finalPanorama.jpg", final_panorama)
+    print(f"Panorama saved at '{output_path}'.")
 
 if __name__ == "__main__":
     main()
