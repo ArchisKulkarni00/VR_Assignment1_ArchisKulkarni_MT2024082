@@ -76,6 +76,8 @@ Generated left panorama from input images:
 Final panorama from left and right panoramas:
 ![Panorama Output](./Assignment2//outputImages/Set2/finalPanorama.jpg)
 
+Ideal panorama using opnCV's inbuilt stitcher:
+![Panorama Output](./Assignment2//outputImages/Set2/ideal2.jpg)
 ---
 
 ### **Required Libraries**
@@ -103,3 +105,4 @@ os
 
 ---
 
+\* Generated with GPT and edited with 💖
